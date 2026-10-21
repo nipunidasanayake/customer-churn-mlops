@@ -1,0 +1,64 @@
+name: Scheduled model retraining
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+  push:
+    paths:
+      - "data/telco_customer_churn.csv"
+      - "src/train.py"
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Check for new training data
+        id: data
+        run: |
+          if [ ! -f data/telco_customer_churn.csv ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Training data is not included; provide an authorized dataset before retraining."
+            exit 0
+          fi
+          CURRENT_HASH=$(sha256sum data/telco_customer_churn.csv | cut -d ' ' -f 1)
+          MODEL_HASH=$(python -c "import json; from pathlib import Path; p=Path('models/model_metadata.json'); print(json.loads(p.read_text()).get('data_sha256', '') if p.exists() else '')")
+          if [ "$CURRENT_HASH" = "$MODEL_HASH" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Training data is unchanged; skipping retraining."
+          else
+            PROMOTION_SCHEME=$(python -c "import json; from pathlib import Path; p=Path('models/model_metadata.json'); print(json.loads(p.read_text()).get('promotion_split_scheme', '') if p.exists() else '')")
+            if [ "$PROMOTION_SCHEME" != "customer-id-sha256-buckets-v1" ]; then
+              echo "::error::Champion lacks a reserved promotion split. Bootstrap a model with the current training pipeline before enabling automated promotion."
+              exit 1
+            fi
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Train and track candidate models
+        if: steps.data.outputs.changed == 'true'
+        env:
+          CHURN_REQUIRE_NON_REGRESSION: "1"
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: python src/train.py
+      - name: Publish trained model artifacts
+        if: steps.data.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add models/churn_model.joblib models/model_metadata.json reports/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: retrain churn model"
+            git push
+          fi

@@ -1,0 +1,31 @@
+databases:
+  - name: customer-churn-db
+    databaseName: customer_churn
+    user: churn_user
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: customer-churn-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PREDICTION_DATABASE_URL
+        fromDatabase:
+          name: customer-churn-db
+          property: connectionString
+
+  - type: web
+    name: customer-churn-dashboard
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile.dashboard
+    dockerContext: .
+    autoDeploy: true
+    envVars:
+      - key: API_URL
+        value: https://customer-churn-api.onrender.com
