@@ -1,47 +1,161 @@
 # Customer Churn Prediction Platform
 
-An end-to-end MLOps source project for customer churn prediction. It provides a real-time prediction API, MLflow experiment tracking, prediction telemetry, feature-drift monitoring, a Streamlit dashboard, scheduled retraining, CI, Docker Compose, and a Render deployment blueprint. This public repository does not contain the Telco dataset, trained model, or generated reports; obtain authorized data and train a model locally before running the application.
+An end-to-end MLOps demonstration for predicting customer churn. The repository includes model training and evaluation, an inference API, Streamlit dashboards, experiment tracking, prediction telemetry, PSI-based feature-drift monitoring, Docker Compose, GitHub Actions CI, and a scheduled retraining workflow.
+
+The public source repository intentionally excludes the training dataset and trained model artifacts. The live Streamlit Community Cloud app is a public demo and should only be used with synthetic data. This is a portfolio/demo platform, not a production-ready service for real customer data.
+
+## Project status and deliverables
+
+| Capability | Included | Notes |
+|---|---|---|
+| Real-time predictions | Yes | FastAPI `/predict` endpoint; the public Streamlit demo scores in-process and does not expose this API. |
+| Model training and evaluation | Yes | Compares Logistic Regression, Random Forest, and Gradient Boosting; selects using validation F1 and reports a separate held-out test cohort. |
+| Experiment tracking | Yes | MLflow; local runs use SQLite by default. Set `MLFLOW_TRACKING_URI` for a remote tracking server. |
+| Model promotion check | Yes | The automated workflow can reject a candidate whose reserved-cohort F1 regresses against the champion. |
+| Drift and service monitoring | Yes | PSI-based drift, prediction history, and API request metrics are available in the API-backed dashboard. |
+| Dockerized application | Yes | Dockerfiles and Compose configuration run the API, dashboard, and PostgreSQL locally. |
+| CI/CD | Partially | GitHub Actions tests and builds the services. Hosting can deploy source changes from `main`; retrained artifact publication and automatic replacement of the deployed private model bundle are not fully wired. |
+| Automated retraining | Conditional | A scheduled workflow exists, but the authorized dataset is absent by default and no private-data download is configured. See [Automated retraining limitations](#automated-retraining-limitations). |
+| Live cloud demo | Yes | [Open the public Streamlit demo](https://customer-churn-mlops-epsoi8s3657qpcyjgxztbd.streamlit.app/). It uses ephemeral SQLite and lightweight in-process limits. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    CSV[Versioned labeled CSV] --> Train[Training and validation]
-    Train --> MLflow[MLflow experiments]
-    Train --> Artifacts[Model and metadata]
-    Artifacts --> CI[GitHub Actions CI]
-    CI --> Render[Render auto-deploy]
-    Client --> Dashboard[Streamlit application]
-    Dashboard --> API[FastAPI prediction API]
-    API --> Store[(PostgreSQL / SQLite telemetry)]
-    Store --> Drift[PSI drift monitor]
-    Baseline[Training-data feature baseline] --> Drift
-    Drift --> Dashboard
-    CSV --> Schedule[Scheduled retraining workflow]
-    Schedule --> Train
+    Data[Authorized labeled dataset] --> Train[Train, compare, and evaluate]
+    Train --> Track[MLflow experiment tracking]
+    Train --> Gate[Reserved-cohort promotion gate]
+    Gate --> Model[Model, metadata, and feature baseline]
+    Model --> Bundle[Private model artifact bundle]
+
+    subgraph PublicDemo[Streamlit Community Cloud demo]
+        Visitor[Public demo user] --> CloudUI[Streamlit dashboard]
+        CloudUI --> Embedded[In-process scoring and monitoring]
+        Embedded --> CloudDB[(Ephemeral SQLite)]
+        Embedded -. "session and per-IP demo limits" .-> CloudUI
+    end
+    Bundle -. "configured deployment secret" .-> Embedded
+    Main[GitHub main branch] --> Deploy[Streamlit source deployment]
+
+    subgraph APIStack[Local Docker Compose or optional Render blueprint]
+        User[Dashboard user] --> UI[Streamlit dashboard]
+        UI --> API[FastAPI prediction API]
+        API --> DB[(PostgreSQL in Compose / SQLite fallback)]
+        DB --> Monitor[PSI and API request metrics]
+        Baseline[Training feature baseline] --> Monitor
+        Monitor --> UI
+    end
+
+    Main --> CI[GitHub Actions tests and Docker builds]
+    Schedule[Scheduled/manual retraining workflow] -. "requires authorized dataset" .-> Train
+    Gate -. "artifact publishing and serving update require setup" .-> Bundle
 ```
 
-## Run locally
+The repository supports two different serving arrangements:
 
-Use Python 3.11 and PowerShell:
+1. **Public Streamlit demo:** a single Streamlit Community Cloud app downloads the trusted private artifact bundle, performs scoring in the Streamlit process, and stores telemetry in temporary SQLite.
+2. **API-backed stack:** a Streamlit dashboard calls FastAPI. Docker Compose runs PostgreSQL for telemetry; direct API runs and the optional Render blueprint use SQLite unless configured otherwise.
+
+These deployment modes are alternatives, not one combined live system. The current public demo is the first mode; its prediction requests do not pass through the separate FastAPI service.
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `app/` | FastAPI application and prediction endpoints |
+| `src/` | Training, artifact packaging/loading, dashboard runtime, and monitoring logic |
+| `dashboard.py`, `dashboard_common.py`, `pages/` | Streamlit views and shared dashboard helpers |
+| `streamlit_cloud/` | Streamlit Community Cloud entrypoint and dependency list |
+| `tests/` | API, dashboard runtime, monitoring, and artifact bundle tests |
+| `.github/workflows/ci.yml` | Tests, Compose validation, and Docker image builds |
+| `.github/workflows/retrain.yml` | Scheduled/manual retraining workflow |
+| `Dockerfile`, `Dockerfile.dashboard`, `compose.yaml` | API, dashboard, and local stack configuration |
+| `render.yaml` | Optional Render API/dashboard blueprint |
+| `data/`, `models/`, `reports/` | Local input/generated artifacts; dataset and model outputs are excluded from Git |
+
+## Requirements
+
+- Python 3.11
+- Git
+- Docker Desktop with Docker Compose, if running the container stack
+- An authorized copy of the labeled training data to train a model
+
+The Telco churn dataset is not bundled. Review its source terms before obtaining, using, or redistributing it. See [data/README.md](./data/README.md).
+
+## Train a model locally
+
+In PowerShell, create and activate a virtual environment, install dependencies, and place an authorized CSV at `data\telco_customer_churn.csv`:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-The training dataset is not included because the source listing does not provide a redistribution license. Review the terms and follow [data/README.md](./data/README.md) to provide an authorized copy at `data/telco_customer_churn.csv`. Then train the model:
-
-```powershell
 python src\train.py
 ```
 
-Training creates the model and metadata under `models\`. Those artifacts and generated reports are ignored by Git; see [models/README.md](./models/README.md).
+The CSV must contain `customerID`, `TotalCharges`, `Churn`, and the 19 model feature columns. `customerID` is used to keep stable cohorts and is excluded from model features. Set `CHURN_DATA_PATH` to use a different local CSV path.
 
-### Prepare private deployment artifacts
+Training compares Logistic Regression, Random Forest, and Gradient Boosting. It selects a model using validation F1 from the development cohort, evaluates the candidate against the reserved promotion cohort, and calculates final test metrics after selection. Customer IDs are assigned to stable SHA-256 buckets for development, promotion, and test cohorts; promotion and test rows are excluded from fitting. Training records the dataset hash, split information, metrics, and scikit-learn version in metadata and logs the run to MLflow.
 
-The API needs a trusted model, metadata, and a reference-feature baseline at runtime. Package these locally from an authorized dataset and trusted model; the package contains feature columns only, not customer IDs or churn labels:
+Generated model files and reports are ignored by Git. See [models/README.md](./models/README.md). Model files are joblib/pickle-compatible artifacts: only load files produced by a trusted training run.
+
+To use a remote MLflow tracking server, set `MLFLOW_TRACKING_URI`. Without it, training defaults to local SQLite tracking (`mlflow.db`). Start the local MLflow UI with:
+
+```powershell
+mlflow ui --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5000
+```
+
+## Run the API and dashboard directly
+
+After training has created model artifacts:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+In a second PowerShell terminal, activate the same virtual environment and run:
+
+```powershell
+streamlit run dashboard.py
+```
+
+The local dashboard is at `http://localhost:8501`. The API listens at `http://127.0.0.1:8000`.
+
+| Endpoint | Purpose |
+|---|---|
+| `/health` | API, model, and telemetry-store health |
+| `/docs` | Interactive OpenAPI documentation |
+| `/model-info` | Loaded model metadata |
+| `/predict` | `POST` churn prediction |
+| `/monitoring` | Recent API metrics and feature drift |
+| `/prediction-history` | Privacy-safe prediction history |
+| `/drift-history` | Historical drift reports |
+
+`POST /predict` accepts the model's input features and returns a prediction ID, churn probability, predicted class, and model version. Customer identifiers are not accepted as model inputs and are not included in prediction history.
+
+The API-backed dashboard includes overview, prediction, and MLOps monitoring views. Its monitoring page presents request counts, response latency, HTTP errors, prediction activity, PSI drift, model evaluation, and service health.
+
+## Telemetry and drift monitoring
+
+The API compares recent prediction inputs with the training-data feature baseline using Population Stability Index (PSI). The report evaluates up to the latest 1,000 prediction inputs; at least 30 observations are required for feature-level reporting, and PSI values of 0.2 or greater are flagged as drift. Historical drift reports are bounded. API request counts, status-code errors, and response times are summarized over the preceding 24 hours. The dashboard uses the project's PSI implementation; Evidently is not integrated.
+
+Telemetry retention is bounded to 30 days and at most 10,000 events per event collection. Configure `PREDICTION_DATABASE_URL` or `DATABASE_URL` to connect the API to PostgreSQL. Without a database URL, a local SQLite database is used. Existing SQLite records are not automatically migrated to PostgreSQL.
+
+## Run with Docker Compose
+
+The Compose stack starts PostgreSQL, the FastAPI service, and the Streamlit dashboard:
+
+```powershell
+docker compose up --build
+```
+
+The default Compose database password is for local development only. Before sharing the stack, set `POSTGRES_PASSWORD` in a local `.env` file and keep that file out of Git. Compose stores PostgreSQL data in the `postgres_data` volume. The API and dashboard expose ports 8000 and 8501, respectively.
+
+The API container needs trusted model artifacts and a feature baseline. For a local run, first train the model into `models/`; Compose mounts `models/` read-only into the API container. Alternatively, configure a private artifact bundle using the variables below. Do not use public source control to distribute restricted datasets, model artifacts, or credentials.
+
+## Package and host private model artifacts
+
+The API and Streamlit Community Cloud entrypoint can load a bundle containing the trained model, metadata, and feature baseline. Package artifacts from trusted local inputs:
 
 ```powershell
 python -m src.package_model_artifacts `
@@ -51,82 +165,64 @@ python -m src.package_model_artifacts `
   --output runtime\churn-model-bundle.tar.gz
 ```
 
-The script prints the bundle's SHA-256. For a simple private GitHub-hosted option, upload `churn_model_bundle.tar.gz` to a **separate private repository**. Configure `MODEL_BUNDLE_URL` to the GitHub Contents API URL for the file (for example, `https://api.github.com/repos/OWNER/REPO/contents/churn_model_bundle.tar.gz?ref=main`) and configure `MODEL_BUNDLE_TOKEN` with a fine-grained GitHub token limited to read-only **Contents** access for that private repository. The downloader requests the raw-file media type and sends the token as a bearer credential. Configure `MODEL_BUNDLE_SHA256` to the packager's printed digest. Keep the bundle repository private; never put the model bundle or token in this public source repository. The API downloads the bundle at startup, verifies the configured SHA-256, rejects unexpected archive paths/files, and extracts only the three expected artifacts.
+The command prints the bundle's SHA-256 checksum. Host the bundle on a private, authorized HTTPS location. For GitHub, use the Contents API URL of a separate private repository and a fine-grained token with read-only Contents permission limited to that repository.
 
-Run the API and dashboard in separate terminals:
+Configure these environment variables or deployment secrets:
 
-```powershell
-uvicorn app.main:app --reload
-streamlit run dashboard.py
-```
+| Variable | Purpose |
+|---|---|
+| `MODEL_BUNDLE_URL` | Private bundle download URL |
+| `MODEL_BUNDLE_SHA256` | Expected SHA-256 digest printed by the packaging command |
+| `MODEL_BUNDLE_TOKEN` | Optional bearer token for the private artifact host |
+| `MODEL_ARTIFACT_DIR` | Directory used to download/extract model files |
 
-- API docs and prediction endpoint: `http://127.0.0.1:8000/docs`
-- Health/readiness check (model and telemetry database): `http://127.0.0.1:8000/health`
-- Monitoring metrics and feature drift: `http://127.0.0.1:8000/monitoring`
-- Privacy-safe prediction history: `http://127.0.0.1:8000/prediction-history`
-- Historical drift reports: `http://127.0.0.1:8000/drift-history`
-- Dashboard: `http://localhost:8501`
-- MLflow UI: `mlflow ui --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5000`
+The artifact loader verifies the configured digest and restricts archive contents to the expected artifacts. Keep bundle URLs and credentials out of public code and logs. Never commit `.env`, Streamlit secrets, private artifacts, or tokens.
 
-`POST /predict` accepts the 19 customer input features shown in the OpenAPI schema and returns a prediction ID, churn probability, class, and model version. Customer IDs are rejected and are not returned in history. The API retains a bounded history of model features (for drift calculation) and scores for up to 30 days (maximum 10,000 observations). The `/prediction-history` response exposes only prediction ID, time, predicted class, score, and model version. Configure `PREDICTION_DATABASE_URL` (or the platform-provided `DATABASE_URL`) to connect to PostgreSQL. A local SQLite file remains the fallback when running the API directly without a database URL.
+## Public Streamlit Community Cloud demo
 
-The `/monitoring` endpoint compares the latest 1,000 prediction inputs with the training-data baseline using Population Stability Index (PSI). Drift is flagged at PSI >= 0.2; at least 30 observations are needed before feature-level PSI is reported. Each new prediction window evaluated after that minimum is reached is kept as a bounded historical drift report. API request counts, status-code errors, and response latency are collected for non-monitoring API requests and summarized over the last 24 hours. Drift monitoring currently uses the project's tested PSI implementation; Evidently is not integrated.
+The deployed public demo uses `streamlit_cloud/dashboard.py` as its entrypoint and Python 3.11. Its dedicated dependencies are in `streamlit_cloud/requirements.txt`. In the app's Streamlit Secrets settings, configure `MODEL_BUNDLE_URL`, `MODEL_BUNDLE_SHA256`, and `MODEL_BUNDLE_TOKEN`; do not place these values in the repository.
 
-The Streamlit app has three views: an overview, an interactive customer-prediction form with privacy-safe recent history, and a separate MLOps monitor for request counts, response time, HTTP errors, prediction activity, PSI drift, model evaluation, and service health. When telemetry is empty, the prediction page can score a synthetic example. Use **Refresh metrics** on the monitoring page to fetch current API data. The API uses PostgreSQL in Docker Compose and SQLite for direct local runs and the free Render demo. Existing SQLite telemetry is not automatically migrated to PostgreSQL. Set `POSTGRES_PASSWORD` in a local `.env` file to replace Compose's development-only default; URL-encode special characters if the password contains them.
+The demo is public and should only receive synthetic inputs. It warns users not to enter real customer or personally identifiable information. It allows up to 20 attempts per Streamlit session, plus an in-process IP limit of 10 attempts per 10 minutes and 50 per 24 hours. IP counters are HMAC-keyed in process memory; they reset when the app restarts, are not shared between app processes, and may be shared by users behind the same NAT. IP-based limits can also be evaded, so these are demo safeguards rather than robust abuse prevention.
 
-## Run with Docker Compose
+The app's SQLite telemetry is ephemeral and may be lost when Streamlit Community Cloud restarts or sleeps the app. It has no authentication, durable telemetry, or production privacy controls. It scores predictions in-process and does not provide a separate FastAPI endpoint; its request charts therefore do not represent traffic to the FastAPI service.
 
-```powershell
-docker compose up --build
-```
+## Automated retraining limitations
 
-For local Compose, provide an authorized dataset, train a model into `models\`, and keep the local bundle URL unset; the API mounts `data\` and `models\` read-only. For a remote bundle, set `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` in a local `.env` and remove those two local bind mounts from the API service so the downloader can write to its artifact directory. Set `MODEL_BUNDLE_TOKEN` only when your private object-storage service requires bearer-token authentication. The API and dashboard are available at `http://localhost:8000` and `http://localhost:8501`. PostgreSQL stores prediction, API-request, and drift-report telemetry in the `postgres_data` Docker volume. The Compose database password is for local development only; change it using local environment configuration before sharing the Compose stack.
+The scheduled workflow in `.github/workflows/retrain.yml` can be run manually, on its weekly schedule, or when specified training-code/data paths change. It checks for a changed dataset hash, runs training with a reserved-cohort non-regression gate, and attempts to publish generated model files and reports.
 
-## No-card cloud demo with Streamlit Community Cloud
+This is **not currently a hands-off continuous-learning and deployment pipeline**:
 
-If you do not want to add a payment method to Render, the repository includes a **single-app demo** for Streamlit Community Cloud. It keeps the existing Streamlit views but performs model scoring and telemetry access in the Streamlit process instead of calling a separate FastAPI service. The regular FastAPI + Streamlit + PostgreSQL Docker Compose architecture is unchanged.
+- The authorized CSV is not included in this repository and is ignored by Git. The workflow has no step to retrieve it from a private data source, so scheduled runs skip when the file is absent.
+- When changed data is present, the workflow also expects champion metadata using the current reserved-promotion split scheme. A bootstrap champion must be created and made available to the workflow before the non-regression gate can run.
+- A secure, governed process for collecting and validating newly labeled outcomes is not implemented. Prediction requests alone are not labels and must never be used as ground truth.
+- Generated model artifacts and reports are ignored by Git. The workflow's artifact publication step does not override those ignore rules, so generated outputs are not automatically committed as currently configured.
+- Streamlit Community Cloud's private serving bundle is not automatically rebuilt or replaced by this workflow after a new candidate is trained.
+- Persistent MLflow tracking requires configuring the GitHub Actions secret `MLFLOW_TRACKING_URI`.
 
-Deploy `streamlit_cloud/dashboard.py` from the public source repository, select Python 3.11, and add these values under the app's **Advanced settings → Secrets**. Streamlit uses the dedicated `streamlit_cloud/requirements.txt` dependency file next to the entrypoint.
+Before enabling automated retraining, provide authorized, quality-checked labeled data through a secure source, decide how promoted artifacts are published to private storage, and wire deployment to consume the promoted bundle. Review permissions and data governance before granting workflows write access.
 
-```toml
-MODEL_BUNDLE_URL = "https://api.github.com/repos/nipunidasanayake/customer-churn-model-artifacts/contents/churn_model_bundle.tar.gz?ref=main"
-MODEL_BUNDLE_SHA256 = "e82d9b4e7a2a38c81fcdbc1015b475cb9555533c8a8d8979595b5a82770920f9"
-MODEL_BUNDLE_TOKEN = "YOUR_FINE_GRAINED_READ_ONLY_TOKEN"
-```
+## CI/CD and optional Render deployment
 
-Create the token with access only to the private `customer-churn-model-artifacts` repository and **Contents: Read-only** permission. Never commit `secrets.toml`, the token, or the bundle. Streamlit Community Cloud runs this as a public demo unless you configure platform-supported access controls. The app warns users to use synthetic data only, limits each browser session to 20 prediction attempts, and applies an in-process IP limit of 10 attempts per 10 minutes and 50 per 24 hours. Rate-limit counters are HMAC-keyed in memory, reset when the app process restarts, and are not shared across processes; NAT users share an IP quota, and IP-based limits can be evaded. This is a lightweight demo safeguard, not production-grade abuse prevention. The app does not expose a separate FastAPI endpoint; inference latency/error charts count only requests that reach model scoring. Its SQLite history is ephemeral and may be lost on restart or app sleep. It has no authentication, durable telemetry, or production privacy controls and must not be used with real customer data.
+`.github/workflows/ci.yml` runs tests, validates the Compose configuration, and builds both Docker images on pushes to `main`/`master` and pull requests. The Streamlit Community Cloud app is configured separately to deploy from the repository's `main` branch. CI validates builds; it does not itself publish a new private model bundle.
 
-## Training and experiment tracking
-
-`src/train.py` compares Logistic Regression, Random Forest, and Gradient Boosting using a stratified validation sample from the development cohort. Stable SHA-256 buckets of customer IDs reserve disjoint development, promotion, and final test cohorts; promotion and test customers are excluded from model fitting. The automated non-regression gate compares candidate and champion F1 on the reserved promotion cohort. The final test metrics are calculated once after promotion and are not used to choose or promote models. The split scheme is recorded in metadata; an older champion without this metadata must first be replaced by a reviewed training run before automated promotion is enabled.
-
-The scikit-learn version is pinned for model serialization compatibility, included in metadata, and checked when the API loads the artifact. Model files use Python pickle-compatible serialization; only load artifacts produced by a trusted training run.
-
-Set `CHURN_DATA_PATH` to use a different labeled CSV and `MLFLOW_TRACKING_URI` to connect to a remote MLflow tracking server. The CSV must contain `customerID`, `TotalCharges`, and `Churn` as well as the model feature columns. The training script records the dataset SHA-256 in the model metadata.
-
-GitHub Actions runs tests (including artifact validation and a PostgreSQL telemetry round-trip), validates Docker Compose, and builds both service images on pushes and pull requests using test fixtures. The scheduled retraining workflow skips when the dataset is absent; provide an authorized dataset through an appropriate private data source before enabling retraining. When data is supplied, the workflow checks for a changed data hash and only publishes a candidate that does not regress on the reserved promotion cohort. Configure the GitHub Actions secret `MLFLOW_TRACKING_URI` to persist automated-run experiment history in a remote MLflow server; without it, tracking remains in the short-lived runner.
-
-**Real-world limitation:** the supplied Telco CSV is a static labeled sample. Real supervised retraining requires a governed process to deliver new, quality-checked labels into the training dataset; prediction requests alone are not labels and must never be treated as such. This project does not infer outcomes from unlabelled predictions.
-
-## Render deployment
-
-The `render.yaml` blueprint defines a **free demo** API and monitoring dashboard. It does not create a database or any paid service. The API uses SQLite on Render's ephemeral filesystem, so prediction history and monitoring telemetry are lost when the free service restarts, redeploys, or spins down after 15 minutes without traffic. Free services can also have cold starts and monthly usage limits; this configuration is for a demo, not production. For durable telemetry and always-on service, use a paid deployment only after reviewing and explicitly approving the applicable costs.
-
-The public source repository does not include the dataset or trained model. Before creating services, upload the locally prepared bundle to a separate private GitHub repository (or another authorized private HTTPS host) and have its download URL and SHA-256 ready. For GitHub, use the Contents API URL and a fine-grained token with read-only Contents access restricted to the private artifact repository. Render prompts for `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` during Blueprint setup; add `MODEL_BUNDLE_TOKEN` as a secret environment variable. The URL must remain valid across service restarts because the free API downloads the bundle on each cold start. Do not commit restricted data, model artifacts, URLs, or tokens to this public source repository.
-
-1. Push this project to a GitHub repository and connect that repository to Render.
-2. Verify your Render account, then create a Render Blueprint from the repository and enter the private artifact bundle URL and checksum. The Blueprint uses free web services and no database; review Render's current free-tier limits before applying.
-3. Confirm the API URL referenced by `API_URL` in `render.yaml` matches the URL Render assigns.
-4. Configure the GitHub Actions workflow permissions to allow its retraining job to push model artifacts. Render auto-deploys commits to the connected branch.
-5. After deployment, verify `/health`, `/docs`, and the dashboard URL.
-
-The blueprint is configuration only; it does not create cloud resources until applied in a Render account. Render documents that free services are not for production: they spin down after 15 minutes of inactivity and have ephemeral filesystems, so local SQLite telemetry is not durable. This demonstration also has no authentication or rate limiting and must not be supplied with production customer data without those controls, TLS/routing review, access controls, and a privacy-retention review. Do not commit credentials.
+The optional `render.yaml` blueprint defines separate API and dashboard services, with auto-deploy enabled. It is an alternative to the Streamlit Community Cloud single-app demo and is not required to use the currently deployed demo. The blueprint does not configure a persistent database; the configured SQLite path is on an ephemeral filesystem. Review Render's current pricing and service limits before deploying. The Render configuration does not provide the public Streamlit demo's per-IP rate limiter.
 
 ## Validation
+
+Run tests and validate the Compose file from the repository root:
 
 ```powershell
 pytest -q
 docker compose config
 ```
 
-The IBM Telco sample dataset may have redistribution terms; verify the source and license before using or redistributing it. The dataset and its trained artifact are excluded from this public repository.
+GitHub Actions also builds the API and dashboard Docker images. The PostgreSQL round-trip test runs in CI when the workflow-provided PostgreSQL service is available.
+
+## Security and data handling
+
+- Do not use the public demo with real customer data.
+- Keep training data, model bundles, access tokens, and deployment secrets private.
+- Use only authorized datasets and verify source licensing and terms before redistribution.
+- Model artifacts can execute code when deserialized; load only artifacts from trusted training runs.
+- The public demo's session and IP limits are not a replacement for authentication, shared rate limiting, durable storage, access controls, or privacy review.
+- Prediction history and telemetry are operational metrics, not verified customer outcomes. Do not treat predictions as labels for retraining.
