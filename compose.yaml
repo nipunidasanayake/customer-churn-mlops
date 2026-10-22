@@ -20,9 +20,16 @@ services:
       - "8000:8000"
     environment:
       PREDICTION_DATABASE_URL: postgresql+psycopg://churn:${POSTGRES_PASSWORD:-local-development-password}@database:5432/churn
+      MODEL_ARTIFACT_DIR: /tmp/churn-model-artifacts
+      MODEL_BUNDLE_URL: ${MODEL_BUNDLE_URL:-}
+      MODEL_BUNDLE_SHA256: ${MODEL_BUNDLE_SHA256:-}
+      MODEL_BUNDLE_TOKEN: ${MODEL_BUNDLE_TOKEN:-}
     depends_on:
       database:
         condition: service_healthy
+    volumes:
+      - ./models:/tmp/churn-model-artifacts:ro
+      - ./data:/app/data:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]

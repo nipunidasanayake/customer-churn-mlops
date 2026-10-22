@@ -9,3 +9,8 @@ mlflow.db*
 .git/
 .env
 *.log
+data/telco_customer_churn.csv
+models/churn_model.joblib
+models/model_metadata.json
+reports/test_metrics.json
+reports/validation_model_comparison.csv

@@ -18,6 +18,14 @@ services:
         fromDatabase:
           name: customer-churn-db
           property: connectionString
+      - key: MODEL_ARTIFACT_DIR
+        value: /tmp/churn-model-artifacts
+      - key: MODEL_BUNDLE_URL
+        sync: false
+      - key: MODEL_BUNDLE_SHA256
+        sync: false
+      - key: MODEL_BUNDLE_TOKEN
+        sync: false
 
   - type: web
     name: customer-churn-dashboard

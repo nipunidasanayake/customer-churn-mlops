@@ -62,6 +62,7 @@ def use_temporary_prediction_store(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     reference_path = tmp_path / "reference.csv"
+    reference_features_path = tmp_path / "reference_features.csv"
     pd.DataFrame(
         [
             {**sample_customer, "customerID": "fixture-1", "Churn": "No"},
@@ -73,9 +74,11 @@ def use_temporary_prediction_store(tmp_path, monkeypatch):
             },
         ]
     ).to_csv(reference_path, index=False)
+    pd.DataFrame(training_rows).to_csv(reference_features_path, index=False)
 
     monkeypatch.setattr("app.main.MODEL_PATH", model_path)
     monkeypatch.setattr("app.main.METADATA_PATH", metadata_path)
+    monkeypatch.setattr("app.main.REFERENCE_FEATURES_PATH", reference_features_path)
     monkeypatch.setattr("app.main.DATA_PATH", reference_path)
 
 def test_health():

@@ -39,6 +39,20 @@ python src\train.py
 
 Training creates the model and metadata under `models\`. Those artifacts and generated reports are ignored by Git; see [models/README.md](./models/README.md).
 
+### Prepare private deployment artifacts
+
+The API needs a trusted model, metadata, and a reference-feature baseline at runtime. Package these locally from an authorized dataset and trusted model; the package contains feature columns only, not customer IDs or churn labels:
+
+```powershell
+python -m src.package_model_artifacts `
+  --dataset D:\path\to\authorized\telco_customer_churn.csv `
+  --model D:\path\to\trusted\churn_model.joblib `
+  --metadata D:\path\to\trusted\model_metadata.json `
+  --output runtime\churn-model-bundle.tar.gz
+```
+
+The script prints the bundle's SHA-256. Upload the bundle to a private HTTPS object-storage location that supports a stable URL or bearer-token authentication. Do not put the bundle, URL credentials, or token into Git. The deployment service downloads it at startup, verifies the configured SHA-256, rejects unexpected archive paths/files, and extracts only the three expected artifacts.
+
 Run the API and dashboard in separate terminals:
 
 ```powershell
@@ -66,7 +80,7 @@ The Streamlit app has three views: an overview, an interactive customer-predicti
 docker compose up --build
 ```
 
-Provide the authorized dataset and train a model before building the API image. The API and dashboard are available at `http://localhost:8000` and `http://localhost:8501`. PostgreSQL stores prediction, API-request, and drift-report telemetry in the `postgres_data` Docker volume. The Compose database password is for local development only; change it using local environment configuration before sharing the Compose stack.
+For local Compose, provide an authorized dataset, train a model into `models\`, and keep the local bundle URL unset; the API mounts `data\` and `models\` read-only. For a remote bundle, set `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` in a local `.env` and remove those two local bind mounts from the API service so the downloader can write to its artifact directory. Set `MODEL_BUNDLE_TOKEN` only when your private object-storage service requires bearer-token authentication. The API and dashboard are available at `http://localhost:8000` and `http://localhost:8501`. PostgreSQL stores prediction, API-request, and drift-report telemetry in the `postgres_data` Docker volume. The Compose database password is for local development only; change it using local environment configuration before sharing the Compose stack.
 
 ## Training and experiment tracking
 
@@ -76,16 +90,16 @@ The scikit-learn version is pinned for model serialization compatibility, includ
 
 Set `CHURN_DATA_PATH` to use a different labeled CSV and `MLFLOW_TRACKING_URI` to connect to a remote MLflow tracking server. The CSV must contain `customerID`, `TotalCharges`, and `Churn` as well as the model feature columns. The training script records the dataset SHA-256 in the model metadata.
 
-GitHub Actions runs tests (including a PostgreSQL telemetry round-trip), validates Docker Compose, and builds both service images on pushes and pull requests using test fixtures. The scheduled retraining workflow skips when the dataset is absent; provide an authorized dataset through an appropriate private data source before enabling retraining. When data is supplied, the workflow checks for a changed data hash and only publishes a candidate that does not regress on the reserved promotion cohort. Configure the GitHub Actions secret `MLFLOW_TRACKING_URI` to persist automated-run experiment history in a remote MLflow server; without it, tracking remains in the short-lived runner.
+GitHub Actions runs tests (including artifact validation and a PostgreSQL telemetry round-trip), validates Docker Compose, and builds both service images on pushes and pull requests using test fixtures. The scheduled retraining workflow skips when the dataset is absent; provide an authorized dataset through an appropriate private data source before enabling retraining. When data is supplied, the workflow checks for a changed data hash and only publishes a candidate that does not regress on the reserved promotion cohort. Configure the GitHub Actions secret `MLFLOW_TRACKING_URI` to persist automated-run experiment history in a remote MLflow server; without it, tracking remains in the short-lived runner.
 
 **Real-world limitation:** the supplied Telco CSV is a static labeled sample. Real supervised retraining requires a governed process to deliver new, quality-checked labels into the training dataset; prediction requests alone are not labels and must never be treated as such. This project does not infer outcomes from unlabelled predictions.
 
 ## Render deployment
 
-The `render.yaml` blueprint defines the API, a managed PostgreSQL database, and the monitoring dashboard. The public source repository does not include the dataset or trained model, so a deployment built directly from it will not become healthy until you provide those assets to the build using an authorized, controlled distribution method. Do not commit restricted data or model artifacts to a public repository. To deploy after arranging asset provisioning:
+The `render.yaml` blueprint defines the API, a managed PostgreSQL database, and the monitoring dashboard. The public source repository does not include the dataset or trained model. Before creating services, upload the locally prepared bundle to authorized private HTTPS object storage and have its URL and SHA-256 ready. Render prompts for `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` during Blueprint setup; provide `MODEL_BUNDLE_TOKEN` in the service environment only if your storage requires it. The URL must remain valid across service restarts. Do not commit restricted data, model artifacts, URLs, or tokens to this public repository.
 
 1. Push this project to a GitHub repository and connect that repository to Render.
-2. Create a Render Blueprint from the repository and review the costs for the web services and managed PostgreSQL instance before applying.
+2. Create a Render Blueprint from the repository, enter the private artifact bundle URL and checksum, and review the costs for the web services and managed PostgreSQL instance before applying.
 3. Confirm the API URL referenced by `API_URL` in `render.yaml` matches the URL Render assigns.
 4. Configure the GitHub Actions workflow permissions to allow its retraining job to push model artifacts. Render auto-deploys commits to the connected branch.
 5. After deployment, verify `/health`, `/docs`, and the dashboard URL.

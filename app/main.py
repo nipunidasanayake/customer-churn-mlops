@@ -24,8 +24,12 @@ from src.monitoring import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL_PATH = ROOT / "models" / "churn_model.joblib"
-METADATA_PATH = ROOT / "models" / "model_metadata.json"
+MODEL_ARTIFACT_DIR = Path(
+    os.getenv("MODEL_ARTIFACT_DIR", str(ROOT / "models"))
+)
+MODEL_PATH = MODEL_ARTIFACT_DIR / "churn_model.joblib"
+METADATA_PATH = MODEL_ARTIFACT_DIR / "model_metadata.json"
+REFERENCE_FEATURES_PATH = MODEL_ARTIFACT_DIR / "reference_features.csv"
 DATA_PATH = ROOT / "data" / "telco_customer_churn.csv"
 PREDICTION_DB_PATH = Path(
     os.getenv("PREDICTION_DB_PATH", str(ROOT / "runtime" / "predictions.db"))
@@ -57,11 +61,26 @@ async def lifespan(app: FastAPI):
             "Model scikit-learn version does not match runtime: "
             f"trained with {trained_sklearn_version}, running {sklearn.__version__}"
         )
-    if not DATA_PATH.exists():
-        raise RuntimeError(f"Training reference dataset not found: {DATA_PATH}")
-    reference = pd.read_csv(DATA_PATH)
-    reference["TotalCharges"] = pd.to_numeric(reference["TotalCharges"], errors="coerce").fillna(0)
-    reference_features = reference.drop(columns=["Churn", "customerID"])
+    if REFERENCE_FEATURES_PATH.exists():
+        reference_features = pd.read_csv(REFERENCE_FEATURES_PATH)
+    elif DATA_PATH.exists():
+        reference = pd.read_csv(DATA_PATH)
+        reference["TotalCharges"] = pd.to_numeric(
+            reference["TotalCharges"], errors="coerce"
+        ).fillna(0)
+        reference_features = reference.drop(columns=["Churn", "customerID"])
+    else:
+        raise RuntimeError(
+            "Drift reference features not found. Provide model artifacts and a "
+            f"reference baseline at {REFERENCE_FEATURES_PATH}."
+        )
+    expected_features = metadata.get("features", [])
+    missing_features = set(expected_features) - set(reference_features.columns)
+    if missing_features:
+        raise RuntimeError(
+            f"Drift reference baseline is missing model features: {sorted(missing_features)}"
+        )
+    reference_features = reference_features.loc[:, expected_features]
     initialize_store(prediction_store())
     logger.info("Loaded model version %s", metadata.get("model_version", "unknown"))
     yield
