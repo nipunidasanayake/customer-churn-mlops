@@ -13,7 +13,7 @@ flowchart LR
     CI --> Render[Render auto-deploy]
     Client --> Dashboard[Streamlit application]
     Dashboard --> API[FastAPI prediction API]
-    API --> Store[(PostgreSQL telemetry)]
+    API --> Store[(PostgreSQL / SQLite telemetry)]
     Store --> Drift[PSI drift monitor]
     Baseline[Training-data feature baseline] --> Drift
     Drift --> Dashboard
@@ -72,7 +72,7 @@ streamlit run dashboard.py
 
 The `/monitoring` endpoint compares the latest 1,000 prediction inputs with the training-data baseline using Population Stability Index (PSI). Drift is flagged at PSI >= 0.2; at least 30 observations are needed before feature-level PSI is reported. Each new prediction window evaluated after that minimum is reached is kept as a bounded historical drift report. API request counts, status-code errors, and response latency are collected for non-monitoring API requests and summarized over the last 24 hours. Drift monitoring currently uses the project's tested PSI implementation; Evidently is not integrated.
 
-The Streamlit app has three views: an overview, an interactive customer-prediction form with privacy-safe recent history, and a separate MLOps monitor for request counts, response time, HTTP errors, prediction activity, PSI drift, model evaluation, and service health. When telemetry is empty, the prediction page can score a synthetic example. Use **Refresh metrics** on the monitoring page to fetch current API data. The API uses PostgreSQL in Docker Compose and Render; direct local runs default to SQLite. Existing SQLite telemetry is not automatically migrated to PostgreSQL. Set `POSTGRES_PASSWORD` in a local `.env` file to replace Compose's development-only default; URL-encode special characters if the password contains them.
+The Streamlit app has three views: an overview, an interactive customer-prediction form with privacy-safe recent history, and a separate MLOps monitor for request counts, response time, HTTP errors, prediction activity, PSI drift, model evaluation, and service health. When telemetry is empty, the prediction page can score a synthetic example. Use **Refresh metrics** on the monitoring page to fetch current API data. The API uses PostgreSQL in Docker Compose and SQLite for direct local runs and the free Render demo. Existing SQLite telemetry is not automatically migrated to PostgreSQL. Set `POSTGRES_PASSWORD` in a local `.env` file to replace Compose's development-only default; URL-encode special characters if the password contains them.
 
 ## Run with Docker Compose
 
@@ -96,15 +96,17 @@ GitHub Actions runs tests (including artifact validation and a PostgreSQL teleme
 
 ## Render deployment
 
-The `render.yaml` blueprint defines the API, a managed PostgreSQL database, and the monitoring dashboard. The public source repository does not include the dataset or trained model. Before creating services, upload the locally prepared bundle to authorized private HTTPS object storage and have its URL and SHA-256 ready. Render prompts for `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` during Blueprint setup; provide `MODEL_BUNDLE_TOKEN` in the service environment only if your storage requires it. The URL must remain valid across service restarts. Do not commit restricted data, model artifacts, URLs, or tokens to this public repository.
+The `render.yaml` blueprint defines a **free demo** API and monitoring dashboard. It does not create a database or any paid service. The API uses SQLite on Render's ephemeral filesystem, so prediction history and monitoring telemetry are lost when the free service restarts, redeploys, or spins down after 15 minutes without traffic. Free services can also have cold starts and monthly usage limits; this configuration is for a demo, not production. For durable telemetry and always-on service, use a paid deployment only after reviewing and explicitly approving the applicable costs.
+
+The public source repository does not include the dataset or trained model. Before creating services, upload the locally prepared bundle to authorized private HTTPS object storage and have its URL and SHA-256 ready. Render prompts for `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` during Blueprint setup; provide `MODEL_BUNDLE_TOKEN` in the service environment only if your storage requires it. The URL must remain valid across service restarts because the free API downloads the bundle on each cold start. Do not commit restricted data, model artifacts, URLs, or tokens to this public repository.
 
 1. Push this project to a GitHub repository and connect that repository to Render.
-2. Create a Render Blueprint from the repository, enter the private artifact bundle URL and checksum, and review the costs for the web services and managed PostgreSQL instance before applying.
+2. Verify your Render account, then create a Render Blueprint from the repository and enter the private artifact bundle URL and checksum. The Blueprint uses free web services and no database; review Render's current free-tier limits before applying.
 3. Confirm the API URL referenced by `API_URL` in `render.yaml` matches the URL Render assigns.
 4. Configure the GitHub Actions workflow permissions to allow its retraining job to push model artifacts. Render auto-deploys commits to the connected branch.
 5. After deployment, verify `/health`, `/docs`, and the dashboard URL.
 
-The blueprint is configuration only; it does not create cloud resources until applied in a Render account. This demonstration has no authentication or rate limiting and must not be exposed to untrusted traffic or supplied with production customer data without those controls, TLS/routing review, access controls, and a privacy-retention review. Do not commit credentials.
+The blueprint is configuration only; it does not create cloud resources until applied in a Render account. Render documents that free services are not for production: they spin down after 15 minutes of inactivity and have ephemeral filesystems, so local SQLite telemetry is not durable. This demonstration also has no authentication or rate limiting and must not be supplied with production customer data without those controls, TLS/routing review, access controls, and a privacy-retention review. Do not commit credentials.
 
 ## Validation
 

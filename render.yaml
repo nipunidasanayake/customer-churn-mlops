@@ -1,23 +1,15 @@
-databases:
-  - name: customer-churn-db
-    databaseName: customer_churn
-    user: churn_user
-    plan: basic-256mb
-
 services:
   - type: web
     name: customer-churn-api
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      - key: PREDICTION_DATABASE_URL
-        fromDatabase:
-          name: customer-churn-db
-          property: connectionString
+      - key: PREDICTION_DB_PATH
+        value: /tmp/predictions.db
       - key: MODEL_ARTIFACT_DIR
         value: /tmp/churn-model-artifacts
       - key: MODEL_BUNDLE_URL
@@ -30,7 +22,7 @@ services:
   - type: web
     name: customer-churn-dashboard
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile.dashboard
     dockerContext: .
     autoDeploy: true
