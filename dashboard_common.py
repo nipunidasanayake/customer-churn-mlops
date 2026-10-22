@@ -15,6 +15,11 @@ from src.dashboard_runtime import (
 )
 
 DEFAULT_API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+MAX_DEMO_PREDICTIONS_PER_SESSION = 20
+
+
+def has_demo_prediction_quota(predictions_used: int) -> bool:
+    return 0 <= predictions_used < MAX_DEMO_PREDICTIONS_PER_SESSION
 
 
 def apply_styles() -> None:
@@ -110,6 +115,9 @@ def configure_sidebar(active_page: str) -> str:
     st.sidebar.markdown("#### WORKSPACE")
     if embedded_mode_enabled():
         st.sidebar.caption("Single-app demo · in-process model scoring")
+        st.sidebar.warning(
+            "Public demo: use synthetic data only. Do not enter real customer information."
+        )
         api_url = EMBEDDED_API_URL
     else:
         api_url = st.sidebar.text_input(
