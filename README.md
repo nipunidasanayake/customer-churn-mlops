@@ -94,7 +94,7 @@ MODEL_BUNDLE_SHA256 = "e82d9b4e7a2a38c81fcdbc1015b475cb9555533c8a8d8979595b5a827
 MODEL_BUNDLE_TOKEN = "YOUR_FINE_GRAINED_READ_ONLY_TOKEN"
 ```
 
-Create the token with access only to the private `customer-churn-model-artifacts` repository and **Contents: Read-only** permission. Never commit `secrets.toml`, the token, or the bundle. Streamlit Community Cloud runs this as a public demo unless you configure platform-supported access controls. The app does not expose a separate FastAPI endpoint; inference latency/error charts count only explicit in-app scoring attempts. Its SQLite history is ephemeral and may be lost on restart or app sleep. No authentication, rate limiting, durable telemetry, or production privacy controls are added by this demo.
+Create the token with access only to the private `customer-churn-model-artifacts` repository and **Contents: Read-only** permission. Never commit `secrets.toml`, the token, or the bundle. Streamlit Community Cloud runs this as a public demo unless you configure platform-supported access controls. The app warns users to use synthetic data only and limits each browser session to 20 prediction attempts. This session-level limit is not abuse-resistant rate limiting; visitors can start new sessions. The app does not expose a separate FastAPI endpoint; inference latency/error charts count only explicit in-app scoring attempts. Its SQLite history is ephemeral and may be lost on restart or app sleep. It has no authentication, durable telemetry, or production privacy controls and must not be used with real customer data.
 
 ## Training and experiment tracking
 

@@ -5,15 +5,19 @@ import requests
 import streamlit as st
 
 from dashboard_common import (
+    MAX_DEMO_PREDICTIONS_PER_SESSION,
     DashboardRuntimeError,
     apply_styles,
     configure_sidebar,
+    embedded_mode_enabled,
     fetch_json,
+    has_demo_prediction_quota,
     post_prediction,
 )
 
 apply_styles()
 api_url = configure_sidebar("Customer predictions")
+is_embedded_demo = embedded_mode_enabled()
 
 st.markdown('<div class="eyebrow">CUSTOMER INTELLIGENCE / PREDICTION</div>', unsafe_allow_html=True)
 st.title("Predict customer churn")
@@ -21,6 +25,11 @@ st.markdown(
     '<div class="subtle">Enter service and billing details to score a customer with the active model.</div>',
     unsafe_allow_html=True,
 )
+if is_embedded_demo:
+    st.warning(
+        "Public demo: use synthetic data only. Do not enter real customer or personally "
+        "identifiable information."
+    )
 
 try:
     model = fetch_json(api_url, "/model-info")
@@ -36,6 +45,11 @@ summary[0].metric("Total predictions", f'{history["total_predictions"]:,}')
 summary[1].metric("Predicted churn", f'{history["predicted_churn_count"]:,}')
 summary[2].metric("Predicted not churn", f'{history["predicted_non_churn_count"]:,}')
 summary[3].metric("Active model", model.get("model_name", "Unknown"))
+demo_predictions_used = st.session_state.get("demo_predictions_used", 0)
+demo_quota_available = (
+    not is_embedded_demo
+    or has_demo_prediction_quota(demo_predictions_used)
+)
 
 st.write("")
 left, right = st.columns([1.6, 1], gap="large")
@@ -106,9 +120,28 @@ with left:
             "🔮  Predict customer churn",
             type="primary",
             use_container_width=True,
+            disabled=not demo_quota_available,
+        )
+
+if is_embedded_demo:
+    if demo_quota_available:
+        st.caption(
+            f"Demo limit: {demo_predictions_used} of "
+            f"{MAX_DEMO_PREDICTIONS_PER_SESSION} prediction attempts used in this session."
+        )
+    else:
+        st.info(
+            "This browser session has reached the public demo prediction limit. "
+            "Start a new session to continue."
         )
 
 if submitted:
+    if is_embedded_demo:
+        if not has_demo_prediction_quota(demo_predictions_used):
+            st.error("This browser session has reached the public demo prediction limit.")
+            st.stop()
+        st.session_state["demo_predictions_used"] = demo_predictions_used + 1
+
     payload = {
         "gender": gender,
         "SeniorCitizen": int(senior_citizen == "Yes"),
