@@ -92,7 +92,10 @@ def test_download_checks_checksum_and_installs_bundle(tmp_path, monkeypatch):
         "test-token",
     )
 
-    assert requested["headers"] == {"Authorization": "Bearer test-token"}
+    assert requested["headers"] == {
+        "Accept": "application/vnd.github.raw+json",
+        "Authorization": "Bearer " + "test-token",
+    }
     assert requested["stream"] is True
     assert (destination / "churn_model.joblib").read_bytes() == inputs[1].read_bytes()
     installed_reference = pd.read_csv(destination / "reference_features.csv")

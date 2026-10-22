@@ -167,7 +167,9 @@ def download_artifact_bundle(
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging_dir = destination.parent / f".{destination.name}-{uuid.uuid4().hex}"
     archive_path = destination.parent / f".{destination.name}-{uuid.uuid4().hex}.tar.gz"
-    headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else {}
+    headers = {"Accept": "application/vnd.github.raw+json"}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
     try:
         with requests.get(
             bundle_url,
