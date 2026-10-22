@@ -1,6 +1,13 @@
 """Shared layout and API helpers for the Streamlit dashboard pages."""
 
+import hashlib
+import hmac
+import ipaddress
 import os
+import secrets
+import threading
+import time
+from collections import OrderedDict, deque
 
 import requests
 import streamlit as st
@@ -16,6 +23,61 @@ from src.dashboard_runtime import (
 
 DEFAULT_API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 MAX_DEMO_PREDICTIONS_PER_SESSION = 20
+DEMO_IP_LIMITS = (
+    (600, 10, "10 minutes"),
+    (86_400, 50, "24 hours"),
+)
+
+
+class DemoPredictionRateLimiter:
+    def __init__(self, max_tracked_ips: int = 10_000):
+        self._key = secrets.token_bytes(32)
+        self._events: OrderedDict[bytes, deque[float]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._max_tracked_ips = max_tracked_ips
+
+    def check(self, ip_address: str | None, now: float | None = None) -> None:
+        if not ip_address:
+            raise DashboardRuntimeError(
+                "Cannot apply the public demo rate limit because the client IP is unavailable."
+            )
+        try:
+            client_ip = ipaddress.ip_address(ip_address).compressed
+        except ValueError as exc:
+            raise DashboardRuntimeError(
+                "Cannot apply the public demo rate limit because the client IP is invalid."
+            ) from exc
+
+        client_key = hmac.new(
+            self._key,
+            client_ip.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        current_time = time.monotonic() if now is None else now
+        longest_window = DEMO_IP_LIMITS[-1][0]
+
+        with self._lock:
+            events = self._events.setdefault(client_key, deque())
+            while events and current_time - events[0] >= longest_window:
+                events.popleft()
+
+            for window_seconds, limit, window_label in DEMO_IP_LIMITS:
+                count = sum(
+                    current_time - timestamp < window_seconds for timestamp in events
+                )
+                if count >= limit:
+                    raise DashboardRuntimeError(
+                        f"Public demo limit reached: {limit} prediction attempts per IP "
+                        f"per {window_label}."
+                    )
+
+            events.append(current_time)
+            self._events.move_to_end(client_key)
+            while len(self._events) > self._max_tracked_ips:
+                self._events.popitem(last=False)
+
+
+_DEMO_PREDICTION_RATE_LIMITER = DemoPredictionRateLimiter()
 
 
 def has_demo_prediction_quota(predictions_used: int) -> bool:
@@ -143,6 +205,7 @@ def fetch_json(api_url: str, path: str) -> dict:
 
 def post_prediction(api_url: str, payload: dict) -> dict:
     if api_url == EMBEDDED_API_URL:
+        _DEMO_PREDICTION_RATE_LIMITER.check(st.context.ip_address)
         return predict_customer(_dashboard_runtime(), payload)
     response = requests.post(f"{api_url.rstrip('/')}/predict", json=payload, timeout=15)
     response.raise_for_status()
