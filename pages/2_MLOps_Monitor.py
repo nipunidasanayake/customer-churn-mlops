@@ -5,7 +5,13 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from dashboard_common import apply_styles, configure_sidebar, fetch_json
+from dashboard_common import (
+    DashboardRuntimeError,
+    apply_styles,
+    configure_sidebar,
+    embedded_mode_enabled,
+    fetch_json,
+)
 
 apply_styles()
 api_url = configure_sidebar("MLOps monitoring")
@@ -28,15 +34,17 @@ try:
     snapshot = fetch_json(api_url, "/monitoring")
     history = fetch_json(api_url, "/prediction-history?limit=100")
     drift_history = fetch_json(api_url, "/drift-history?limit=100")
-except requests.RequestException as exc:
+except (requests.RequestException, DashboardRuntimeError) as exc:
     st.error(f"Could not load monitoring data from {api_url}: {exc}")
-    st.info("Start FastAPI with `uvicorn app.main:app --reload` and refresh this page.")
+    if not embedded_mode_enabled():
+        st.info("Start FastAPI with `uvicorn app.main:app --reload` and refresh this page.")
     st.stop()
 
 api_metrics = snapshot["api_metrics"]
 with status_column:
     status_column.success(
-        f'API {health.get("status", "unknown").upper()} · '
+        f'{"App" if embedded_mode_enabled() else "API"} '
+        f'{health.get("status", "unknown").upper()} · '
         f'Model {model.get("model_version", "unknown")}'
     )
 
@@ -49,7 +57,7 @@ probabilities.metric(
     if snapshot["mean_churn_probability"] is not None else "—",
 )
 api_quality.metric(
-    "API errors · 24h",
+    "Scoring errors · 24h" if embedded_mode_enabled() else "API errors · 24h",
     f'{api_metrics["error_count"]:,}',
 )
 api_quality.caption(
@@ -70,10 +78,19 @@ drift_count.caption(
 )
 
 st.write("")
-st.markdown("## Prediction and API activity")
 st.markdown(
-    '<div class="subtle">API service metrics use actual observed request status codes and elapsed times. '
-    'Monitoring and health polls are excluded.</div>',
+    "## Prediction runtime activity"
+    if embedded_mode_enabled()
+    else "## Prediction and API activity"
+)
+st.markdown(
+    (
+        '<div class="subtle">In-process model scoring counts and elapsed times; page views and '
+        'platform health probes are not included.</div>'
+        if embedded_mode_enabled()
+        else '<div class="subtle">API service metrics use actual observed request status codes and elapsed times. '
+        'Monitoring and health polls are excluded.</div>'
+    ),
     unsafe_allow_html=True,
 )
 latency_col, error_col, activity_col = st.columns(3)
@@ -87,7 +104,10 @@ latency_col.metric(
     f'{api_metrics["p95_response_time_ms"]:.0f} ms'
     if api_metrics["p95_response_time_ms"] is not None else "—",
 )
-error_col.metric("Requests · 24h", f'{api_metrics["request_count"]:,}')
+error_col.metric(
+    "Scored predictions · 24h" if embedded_mode_enabled() else "Requests · 24h",
+    f'{api_metrics["request_count"]:,}',
+)
 activity_col.metric(
     "Predicted churn · recent history",
     f'{history["predicted_churn_count"]:,}',
@@ -96,7 +116,11 @@ activity_col.metric(
 
 hourly = pd.DataFrame(api_metrics["requests_by_hour"])
 if hourly.empty:
-    st.info("API activity will appear after users submit predictions or make API requests.")
+    st.info(
+        "Prediction scoring activity will appear after a customer is scored."
+        if embedded_mode_enabled()
+        else "API activity will appear after users submit predictions or make API requests."
+    )
 else:
     hourly["hour"] = pd.to_datetime(hourly["hour"], utc=True).dt.strftime("%d %b %H:00")
     hour_order = hourly["hour"].tolist()
@@ -116,7 +140,11 @@ else:
                 sort=hour_order,
                 axis=alt.Axis(labelAngle=-35),
             ),
-            y=alt.Y("count:Q", title="API requests", stack=None),
+            y=alt.Y(
+                "count:Q",
+                title="Prediction scoring" if embedded_mode_enabled() else "API requests",
+                stack=None,
+            ),
             color=alt.Color(
                 "request_type:N",
                 title="Request",

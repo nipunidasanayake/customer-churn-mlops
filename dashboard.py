@@ -1,9 +1,18 @@
 """Home page for the customer churn prediction and MLOps dashboard."""
 
-import requests
+from pathlib import Path
+
 import streamlit as st
 
-from dashboard_common import apply_styles, configure_sidebar, fetch_json
+import requests
+
+from dashboard_common import (
+    DashboardRuntimeError,
+    apply_styles,
+    configure_sidebar,
+    embedded_mode_enabled,
+    fetch_json,
+)
 
 st.set_page_config(
     page_title="Customer Churn AI Platform",
@@ -29,9 +38,10 @@ def show_home() -> None:
         health = fetch_json(api_url, "/health")
         model = fetch_json(api_url, "/model-info")
         monitoring = fetch_json(api_url, "/monitoring")
-    except requests.RequestException as exc:
-        st.error(f"Could not connect to the prediction API at {api_url}: {exc}")
-        st.info("Start the API with `uvicorn app.main:app --reload` or update its URL in the sidebar.")
+    except (requests.RequestException, DashboardRuntimeError) as exc:
+        st.error(f"Could not load the prediction service: {exc}")
+        if not embedded_mode_enabled():
+            st.info("Start the API with `uvicorn app.main:app --reload` or update its URL in the sidebar.")
         st.stop()
 
     api_metrics = monitoring.get("api_metrics", {})
@@ -46,9 +56,13 @@ def show_home() -> None:
     )
     columns[2].metric("Serving model", model.get("model_name", "Unknown"))
     columns[3].metric(
-        "API status",
+        "App status" if embedded_mode_enabled() else "API status",
         health.get("status", "unknown").title(),
-        f'{api_metrics.get("request_count", 0)} requests in 24h',
+        (
+            f'{api_metrics.get("request_count", 0)} predictions in 24h'
+            if embedded_mode_enabled()
+            else f'{api_metrics.get("request_count", 0)} requests in 24h'
+        ),
     )
 
     st.write("")
@@ -78,7 +92,7 @@ def show_home() -> None:
             <div class="feature-card">
               <div class="feature-icon">02 / MONITOR</div>
               <div class="feature-title">Monitor the AI service</div>
-              <div class="feature-copy">Review prediction activity, API latency and errors, feature drift,
+              <div class="feature-copy">Review prediction activity, service latency and errors, feature drift,
               and the model's offline evaluation metrics.</div>
             </div>
             """,
@@ -114,12 +128,12 @@ def show_home() -> None:
 
 
 prediction_page = st.Page(
-    "pages/1_Customer_Predictions.py",
+    Path(__file__).resolve().parent / "pages" / "1_Customer_Predictions.py",
     title="Customer Predictions",
     icon="🔮",
 )
 monitor_page = st.Page(
-    "pages/2_MLOps_Monitor.py",
+    Path(__file__).resolve().parent / "pages" / "2_MLOps_Monitor.py",
     title="MLOps Monitoring",
     icon="📊",
 )

@@ -10,6 +10,7 @@ mlflow.db
 mlflow.db-shm
 mlflow.db-wal
 runtime/
+/.streamlit/secrets.toml
 *.log
 data/telco_customer_churn.csv
 models/churn_model.joblib

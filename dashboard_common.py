@@ -5,6 +5,15 @@ import os
 import requests
 import streamlit as st
 
+from src.dashboard_runtime import (
+    DashboardRuntimeError,
+    EMBEDDED_API_URL,
+    embedded_mode_enabled,
+    get_embedded_json,
+    load_dashboard_runtime,
+    predict_customer,
+)
+
 DEFAULT_API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
@@ -85,6 +94,11 @@ def apply_styles() -> None:
     )
 
 
+@st.cache_resource(show_spinner="Loading the churn model...")
+def _dashboard_runtime():
+    return load_dashboard_runtime()
+
+
 def configure_sidebar(active_page: str) -> str:
     st.sidebar.markdown(
         """
@@ -94,12 +108,16 @@ def configure_sidebar(active_page: str) -> str:
         unsafe_allow_html=True,
     )
     st.sidebar.markdown("#### WORKSPACE")
-    api_url = st.sidebar.text_input(
-        "Prediction API",
-        value=st.session_state.get("dashboard_api_url", DEFAULT_API_URL),
-        help="Base URL for the FastAPI prediction service.",
-    ).rstrip("/")
-    st.session_state["dashboard_api_url"] = api_url
+    if embedded_mode_enabled():
+        st.sidebar.caption("Single-app demo · in-process model scoring")
+        api_url = EMBEDDED_API_URL
+    else:
+        api_url = st.sidebar.text_input(
+            "Prediction API",
+            value=st.session_state.get("dashboard_api_url", DEFAULT_API_URL),
+            help="Base URL for the FastAPI prediction service.",
+        ).rstrip("/")
+        st.session_state["dashboard_api_url"] = api_url
     st.sidebar.caption(f"Current page · {active_page}")
     st.sidebar.divider()
     st.sidebar.caption("Historical prediction records exclude customer identifiers.")
@@ -108,6 +126,16 @@ def configure_sidebar(active_page: str) -> str:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def fetch_json(api_url: str, path: str) -> dict:
+    if api_url == EMBEDDED_API_URL:
+        return get_embedded_json(_dashboard_runtime(), path)
     response = requests.get(f"{api_url.rstrip('/')}{path}", timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def post_prediction(api_url: str, payload: dict) -> dict:
+    if api_url == EMBEDDED_API_URL:
+        return predict_customer(_dashboard_runtime(), payload)
+    response = requests.post(f"{api_url.rstrip('/')}/predict", json=payload, timeout=15)
     response.raise_for_status()
     return response.json()

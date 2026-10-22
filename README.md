@@ -82,6 +82,20 @@ docker compose up --build
 
 For local Compose, provide an authorized dataset, train a model into `models\`, and keep the local bundle URL unset; the API mounts `data\` and `models\` read-only. For a remote bundle, set `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256` in a local `.env` and remove those two local bind mounts from the API service so the downloader can write to its artifact directory. Set `MODEL_BUNDLE_TOKEN` only when your private object-storage service requires bearer-token authentication. The API and dashboard are available at `http://localhost:8000` and `http://localhost:8501`. PostgreSQL stores prediction, API-request, and drift-report telemetry in the `postgres_data` Docker volume. The Compose database password is for local development only; change it using local environment configuration before sharing the Compose stack.
 
+## No-card cloud demo with Streamlit Community Cloud
+
+If you do not want to add a payment method to Render, the repository includes a **single-app demo** for Streamlit Community Cloud. It keeps the existing Streamlit views but performs model scoring and telemetry access in the Streamlit process instead of calling a separate FastAPI service. The regular FastAPI + Streamlit + PostgreSQL Docker Compose architecture is unchanged.
+
+Deploy `streamlit_cloud/dashboard.py` from the public source repository, select Python 3.11, and add these values under the app's **Advanced settings → Secrets**. Streamlit uses the dedicated `streamlit_cloud/requirements.txt` dependency file next to the entrypoint.
+
+```toml
+MODEL_BUNDLE_URL = "https://api.github.com/repos/nipunidasanayake/customer-churn-model-artifacts/contents/churn_model_bundle.tar.gz?ref=main"
+MODEL_BUNDLE_SHA256 = "e82d9b4e7a2a38c81fcdbc1015b475cb9555533c8a8d8979595b5a82770920f9"
+MODEL_BUNDLE_TOKEN = "YOUR_FINE_GRAINED_READ_ONLY_TOKEN"
+```
+
+Create the token with access only to the private `customer-churn-model-artifacts` repository and **Contents: Read-only** permission. Never commit `secrets.toml`, the token, or the bundle. Streamlit Community Cloud runs this as a public demo unless you configure platform-supported access controls. The app does not expose a separate FastAPI endpoint; inference latency/error charts count only explicit in-app scoring attempts. Its SQLite history is ephemeral and may be lost on restart or app sleep. No authentication, rate limiting, durable telemetry, or production privacy controls are added by this demo.
+
 ## Training and experiment tracking
 
 `src/train.py` compares Logistic Regression, Random Forest, and Gradient Boosting using a stratified validation sample from the development cohort. Stable SHA-256 buckets of customer IDs reserve disjoint development, promotion, and final test cohorts; promotion and test customers are excluded from model fitting. The automated non-regression gate compares candidate and champion F1 on the reserved promotion cohort. The final test metrics are calculated once after promotion and are not used to choose or promote models. The split scheme is recorded in metadata; an older champion without this metadata must first be replaced by a reviewed training run before automated promotion is enabled.

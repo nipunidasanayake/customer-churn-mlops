@@ -4,7 +4,13 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from dashboard_common import apply_styles, configure_sidebar, fetch_json
+from dashboard_common import (
+    DashboardRuntimeError,
+    apply_styles,
+    configure_sidebar,
+    fetch_json,
+    post_prediction,
+)
 
 apply_styles()
 api_url = configure_sidebar("Customer predictions")
@@ -19,9 +25,10 @@ st.markdown(
 try:
     model = fetch_json(api_url, "/model-info")
     history = fetch_json(api_url, "/prediction-history?limit=100")
-except requests.RequestException as exc:
+except (requests.RequestException, DashboardRuntimeError) as exc:
     st.error(f"Could not load the prediction service at {api_url}: {exc}")
-    st.info("Start FastAPI with `uvicorn app.main:app --reload` and refresh this page.")
+    if api_url != "embedded://local":
+        st.info("Start FastAPI with `uvicorn app.main:app --reload` and refresh this page.")
     st.stop()
 
 summary = st.columns(4)
@@ -125,16 +132,13 @@ if submitted:
     }
     try:
         with st.spinner("Scoring customer with the active model..."):
-            response = requests.post(
-                f"{api_url}/predict",
-                json=payload,
-                timeout=15,
+            st.session_state["last_customer_prediction"] = post_prediction(
+                api_url,
+                payload,
             )
-            response.raise_for_status()
-        st.session_state["last_customer_prediction"] = response.json()
         fetch_json.clear()
         st.rerun()
-    except requests.RequestException as exc:
+    except (requests.RequestException, DashboardRuntimeError) as exc:
         st.error(f"Prediction request failed: {exc}")
 
 result = st.session_state.get("last_customer_prediction")
