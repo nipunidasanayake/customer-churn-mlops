@@ -1,6 +1,6 @@
 # Customer Churn Prediction Platform
 
-An end-to-end MLOps demonstration for predicting customer churn. The repository includes model training and evaluation, an inference API, Streamlit dashboards, experiment tracking, prediction telemetry, PSI-based feature-drift monitoring, Docker Compose, GitHub Actions CI, and a scheduled retraining workflow.
+An end-to-end MLOps demonstration for predicting customer churn. The repository includes model training and evaluation, an inference API, Streamlit dashboards, experiment tracking, prediction telemetry, PSI-based feature-drift monitoring, Docker Compose, GitHub Actions CI/CD to GitHub Container Registry, and a scheduled retraining workflow.
 
 The public source repository intentionally excludes the training dataset and trained model artifacts. The live Streamlit Community Cloud app is a public demo and should only be used with synthetic data. This is a portfolio/demo platform, not a production-ready service for real customer data.
 
@@ -14,7 +14,7 @@ The public source repository intentionally excludes the training dataset and tra
 | Model promotion check | Yes | The automated workflow can reject a candidate whose reserved-cohort F1 regresses against the champion. |
 | Drift and service monitoring | Yes | PSI-based drift, prediction history, and API request metrics are available in the API-backed dashboard. |
 | Dockerized application | Yes | Dockerfiles and Compose configuration run the API, dashboard, and PostgreSQL locally. |
-| CI/CD | Partially | GitHub Actions tests and builds the services. Hosting can deploy source changes from `main`; retrained artifact publication and automatic replacement of the deployed private model bundle are not fully wired. |
+| CI/CD | Yes | GitHub Actions tests and builds both Docker images, then publishes them to GitHub Container Registry (GHCR) after pushes to `main` or `master`. This delivers images; it does not deploy a running cloud service. Retrained model artifact publication is not wired. |
 | Automated retraining | Conditional | A scheduled workflow exists, but the authorized dataset is absent by default and no private-data download is configured. See [Automated retraining limitations](#automated-retraining-limitations). |
 | Live cloud demo | Yes | [Open the public Streamlit demo](https://customer-churn-mlops-epsoi8s3657qpcyjgxztbd.streamlit.app/). It uses ephemeral SQLite and lightweight in-process limits. |
 
@@ -47,6 +47,7 @@ flowchart LR
     end
 
     Main --> CI[GitHub Actions tests and Docker builds]
+    CI --> Registry[GitHub Container Registry API and dashboard images]
     Schedule[Scheduled/manual retraining workflow] -. "requires authorized dataset" .-> Train
     Gate -. "artifact publishing and serving update require setup" .-> Bundle
 ```
@@ -201,11 +202,19 @@ This is **not currently a hands-off continuous-learning and deployment pipeline*
 
 Before enabling automated retraining, provide authorized, quality-checked labeled data through a secure source, decide how promoted artifacts are published to private storage, and wire deployment to consume the promoted bundle. Review permissions and data governance before granting workflows write access.
 
-## CI/CD and optional Render deployment
+## CI/CD and container image publishing
 
-`.github/workflows/ci.yml` runs tests, validates the Compose configuration, and builds both Docker images on pushes to `main`/`master` and pull requests. The Streamlit Community Cloud app is configured separately to deploy from the repository's `main` branch. CI validates builds; it does not itself publish a new private model bundle.
+`.github/workflows/ci.yml` runs tests, validates the Compose configuration, and builds both Docker images for pull requests and pushes to `main`/`master`. Pull requests do not publish images. A successful push to either branch publishes versioned (`<commit-sha>`) and `latest` API and dashboard images to GitHub Container Registry (GHCR), using the workflow's `GITHUB_TOKEN`; no Render account, deploy hooks, or payment card is needed.
 
-The optional `render.yaml` blueprint defines separate API and dashboard services, with auto-deploy enabled. It is an alternative to the Streamlit Community Cloud single-app demo and is not required to use the currently deployed demo. The blueprint does not configure a persistent database; the configured SQLite path is on an ephemeral filesystem. Review Render's current pricing and service limits before deploying. The Render configuration does not provide the public Streamlit demo's per-IP rate limiter.
+To demonstrate the workflow:
+
+1. Push or merge a change to `main` (or `master`).
+2. In the GitHub repository, open **Actions** and show the passing tests, Compose validation, Docker builds, and GHCR publish steps.
+3. Open the repository's **Packages** page (or the owner's profile **Packages**) to show the published API and dashboard images. Pull them with `docker pull ghcr.io/<owner>/<repository>-api:latest` and `docker pull ghcr.io/<owner>/<repository>-dashboard:latest`.
+
+Packages may initially be private. If you want to show them publicly, change each package's visibility in its GHCR package settings; do not publish training data, model files, tokens, or private bundles. Publishing container images is continuous delivery of versioned artifacts, not deployment to a live cloud runtime. Run the application locally with Docker Compose, or configure a separate hosting provider if a public live deployment is required.
+
+The optional `render.yaml` blueprint remains available for hosting but provisions cloud services separately. Render may require billing verification. Its configuration does not provide the public Streamlit demo's per-IP rate limiter. The Streamlit Community Cloud demo is a separate deployment and is not deployed by this CI workflow.
 
 ## Validation
 
